@@ -47,10 +47,10 @@ const __unit_header genericfx_unit_header_t unit_header = {
     .header_size = sizeof(genericfx_unit_header_t),           // Size of this header. Leave as is.
     .target = UNIT_TARGET_PLATFORM | k_unit_module_genericfx, // Target platform and module pair for this unit
     .api = UNIT_API_VERSION,                                  // API version for which unit was built. See runtime.h
-    .dev_id = mili,                                     // PLACEHOLDER ('fumi'): replace with your own developer ID (see developer_ids.md; 0 is invalid)
+    .dev_id = 0x6D696C69,                                     // 'mili' as a 32-bit number (must be a numeric constant, not a bare word)
     .unit_id = 0x1U,                                          // ID for this unit, scoped within your dev_id
     .version = 0x00010000U,                                   // major<<16 | minor<<8 | patch
-    .name = "ms20",                                          // Name displayed on device (max 19 chars)
+    .name = "ms20",                                           // Name displayed on device (max 19 chars)
     .num_params = 6,                                          // Number of valid parameter descriptors. (max. 8)
 
     .params = {
