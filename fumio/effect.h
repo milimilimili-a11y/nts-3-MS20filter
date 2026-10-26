@@ -2,8 +2,8 @@
 /*
  *  File: effect.h
  *
- *  fumio - MS-20 style filter for the NTS-3 kaoss pad kit: high-pass into low-pass,
- *  one shared resonance.
+ *  fumio - MS-20 style filter for the NTS-3 kaoss pad kit: high-pass into low-pass.
+ *  The RESO control drives the low-pass only; the high-pass has a fixed resonance.
  *
  *  Port of the fumio~ Pure Data external by Johannes Regnier, itself based on
  *  Miller Puckette's bob~ (Runge-Kutta 4th order, BSD license, copyright 2015 Miller Puckette).
@@ -42,8 +42,18 @@ public:
 
   static constexpr float kMinHz = 20.f;
   static constexpr float kMaxHz = 20000.f;  // the core limits this to 12 kHz at QUALITY 1X
-  static constexpr float kMaxReso = 6.f;    // the original external is unbounded; ~3+ self-oscillates
   static constexpr float kMaxDrive = 4.f;   // input gain at DRIVE = 1023
+
+  // RESO scale. The parameter is shown as 0.000 .. 6.000 (value 0 .. 6000, three decimals).
+  // The raw filter resonance r is mapped so that the low-pass starts to self-oscillate at
+  // kResoSelfOscAt on that scale (r = fumio::kSelfOscRes there, measured, see test_effect.cc).
+  static constexpr float kResoDisplayScale = 1000.f;  // parameter units per displayed unit
+  static constexpr float kResoSelfOscAt = 5.f;        // displayed value where self-oscillation starts
+  static constexpr float kResoToRaw = fumio::kSelfOscRes / kResoSelfOscAt;  // raw r per displayed unit
+
+  // Fixed high-pass resonance, on the same displayed 0..6 scale as RESO (2 = 40% of the way
+  // to self-oscillation). Change this number to change the high-pass resonance.
+  static constexpr float kHpfResoDisplay = 2.f;
 
   inline void setParameter(uint8_t index, int32_t value) override final
   {
@@ -58,8 +68,8 @@ public:
       break;
 
     case RESO:
-      // 0.0 .. 100.0 % in tenths of a percent -> 0 .. kMaxReso
-      fx_.res_target = (value / 1000.f) * kMaxReso;
+      // 0.000 .. 6.000 displayed -> raw resonance of the low-pass only
+      fx_.lp_res_target = (value / kResoDisplayScale) * kResoToRaw;
       break;
 
     case MIX:
@@ -101,6 +111,7 @@ public:
   {
     (void)allocated_buffer;  // not used: no SDRAM requested
     fx_.init(getSampleRate(), 2);
+    fx_.hp_res = kHpfResoDisplay * kResoToRaw;  // fixed, after init() has reset everything
   }
 
   void teardown() override final {}
