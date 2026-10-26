@@ -66,10 +66,10 @@ static double rms(const std::vector<float> &v, size_t from) {
   return sqrt(a / (v.size() - from));
 }
 
-static void setup(fumio::Fx &fx, int ch, float hp, float lp, float hpres, float lpres, float mix, float gain, int os) {
+static void setup(fumio::Fx &fx, int ch, float hp, float lp, float hpres, float lpres, float mix, float drive, int os) {
   fx.init(48000.f, ch);  // init first (resets to defaults), then set params, as on the device
   fx.hp_hz_target = hp; fx.lp_hz_target = lp; fx.hp_res = hpres; fx.lp_res_target = lpres;
-  fx.mix_target = mix; fx.gain_target = gain;
+  fx.mix_target = mix; fx.drive_target = drive;
   fx.set_oversample(os);
   fx.snap();
 }
@@ -79,12 +79,12 @@ int main() {
   const int N = 48000;
   int fails = 0;
 
-  // 1) Whole chain vs double reference, mono, mix = 1. Includes drive 4 (checks the state clamp
-  //    never engages in normal use: reference has no clamp).
-  for (float gain : {1.f, 4.f}) {
+  // 1) Whole chain vs double reference, mono, mix = 1. Includes drive (reference: libm tanh(a x)/a in
+  //    front of the filters) and checks the state clamp never engages in normal use (reference has none).
+  for (float drive : {0.f, 3.f, 10.f}) {
     for (float lpres : {0.f, 1.f, 1.9f}) {
       fumio::Fx fx;
-      setup(fx, 1, 300.f, 3000.f, 0.8f, lpres, 1.f, gain, 2);
+      setup(fx, 1, 300.f, 3000.f, 0.8f, lpres, 1.f, drive, 2);
       RefHp rh; rh.cutoff = 300; rh.res = 0.8;
       RefLp rl; rl.cutoff = 3000; rl.res = lpres;
       std::vector<float> in(N), out(N);
@@ -93,11 +93,12 @@ int main() {
       fx.process(in.data(), out.data(), N);
       double err = 0, sig = 0;
       for (int n = 0; n < N; ++n) {
-        double y = rl.tick(rh.tick(in[n] * gain, sr, 2), sr, 2) / gain;
+        double xs = drive > 1e-3 ? tanh(drive * (double)in[n]) / drive : (double)in[n];
+        double y = rl.tick(rh.tick(xs, sr, 2), sr, 2);
         if (n >= 2000) { err += (y - out[n]) * (y - out[n]); sig += y * y; }
       }
       double rel = sqrt(err / (sig + 1e-12));
-      printf("chain drive %.0fx, lp res %.1f: relative error vs double reference = %.4f%s\n", gain, lpres, rel, rel > 0.03 ? "  <-- FAIL" : "");
+      printf("chain drive a=%.0f, lp res %.1f: relative error vs double reference = %.4f%s\n", drive, lpres, rel, rel > 0.03 ? "  <-- FAIL" : "");
       if (rel > 0.03) ++fails;
     }
   }
@@ -135,6 +136,43 @@ int main() {
     printf("analytic response (LP and HP, r = 0, 0.8, 1.9): worst error %.2f%%\n", worst * 100);
   }
 
+  // 2b) DRIVE behaves as designed: clean at 0, invisible on quiet signals, clearly audible on loud ones.
+  {
+    auto run = [&](float amp, float drive, std::vector<float> &out) {
+      fumio::Fx fx; setup(fx, 1, 20.f, 3000.f, 0.8f, 0.4f, 1.f, drive, 2);
+      std::vector<float> in(N); out.assign(N, 0.f);
+      for (int n = 0; n < N; ++n) in[n] = amp * (0.6f * sinf(6.2831853f * 220.f * n / sr) + 0.4f * sinf(6.2831853f * 1230.f * n / sr));
+      fx.process(in.data(), out.data(), N);
+    };
+    auto diff_db = [&](const std::vector<float> &a, const std::vector<float> &b) {
+      double d = 0, e = 0;
+      for (int n = 4800; n < N; ++n) { d += (double)(a[n] - b[n]) * (a[n] - b[n]); e += (double)a[n] * a[n]; }
+      return 10 * log10(d / e + 1e-30);
+    };
+    std::vector<float> clean, quiet_hi, loud_hi, loud_mid, tiny_clean, tiny_hi;
+    run(0.3f, 0.f, clean);  run(0.3f, 10.f, loud_hi);  run(0.3f, 3.f, loud_mid);
+    run(0.001f, 0.f, tiny_clean); run(0.001f, 10.f, tiny_hi);
+    const double d_hi = diff_db(clean, loud_hi), d_mid = diff_db(clean, loud_mid), d_tiny = diff_db(tiny_clean, tiny_hi);
+    printf("DRIVE (0.3-peak signal, default resonance): a=10 changes the sound by %.1f dB, a=3 by %.1f dB; a 0.001-peak signal by %.1f dB\n", d_hi, d_mid, d_tiny);
+    if (!(d_hi > -12.0)) { puts("  FAIL: top of DRIVE is not clearly audible"); ++fails; }
+    if (!(d_mid > -25.0)) { puts("  FAIL: middle of DRIVE is not audible"); ++fails; }
+    if (!(d_tiny < -45.0)) { puts("  FAIL: DRIVE should leave quiet signals alone"); ++fails; }
+    // drive = 0 must be bit-exact with the no-saturator path
+    fumio::Fx f0; setup(f0, 1, 20.f, 3000.f, 0.8f, 0.4f, 1.f, 0.f, 2);
+    std::vector<float> in(2000), o0(2000);
+    for (int n = 0; n < 2000; ++n) in[n] = 0.5f * sinf(6.2831853f * 440.f * n / sr);
+    f0.process(in.data(), o0.data(), 2000);
+    fumio::LpChannel lp; fumio::HpChannel hp; bool exact = true;
+    const float h = 1.f / (2 * sr);
+    for (int n = 0; n < 2000; ++n) {
+      float w = lp.tick(hp.tick(in[n], fumio::kTwoPi * 20.f, 0.8f, h, 2), fumio::kTwoPi * 3000.f, 0.4f, h, 2);
+      const float expect = in[n] + 1.f * (w - in[n]);  // the dry/wet mix step at mix = 1, as in Fx::process
+      if (expect != o0[n]) exact = false;
+    }
+    printf("drive 0 is bit-identical to the bare filters (plus the mix step): %s\n", exact ? "yes" : "NO");
+    if (!exact) { puts("  FAIL"); ++fails; }
+  }
+
   // 3) Stability at extremes: noise in, all cutoff pairings, resonances well past self-oscillation, max drive, stereo
   {
     float worst_peak = 0;
@@ -144,7 +182,7 @@ int main() {
           for (float lpres : {0.f, 2.f, 2.4f, 10.f})
             for (int os : {1, 4}) {
               fumio::Fx fx;
-              setup(fx, 2, hp, lp, hpres, lpres, 1.f, 4.f, os);
+              setup(fx, 2, hp, lp, hpres, lpres, 1.f, 10.f, os);
               std::vector<float> in(2 * N), out(2 * N);
               unsigned s = 12345;
               for (auto &x : in) { s = s * 1664525u + 1013904223u; x = ((s >> 8) & 0xffff) / 32768.f - 1.f; }
@@ -154,7 +192,7 @@ int main() {
               if (peak > worst_peak) worst_peak = peak;
               if (bad || peak > 30.f) { printf("UNSTABLE hp %.0f lp %.0f hpres %.1f lpres %.1f os %d peak %.2f\n", hp, lp, hpres, lpres, os, peak); ++fails; }
             }
-    printf("stability sweep done (worst peak %.2f with full-scale noise at 4x drive)\n", worst_peak);
+    printf("stability sweep done (worst peak %.2f with full-scale noise at maximum drive)\n", worst_peak);
   }
 
   printf(fails ? "\n%d FAILURE(S)\n" : "\nall checks passed\n", fails);

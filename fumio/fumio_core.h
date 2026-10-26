@@ -3,7 +3,7 @@
 // Based on fumio~.c (Johannes Regnier), itself based on Miller Puckette's bob~
 // (Runge-Kutta 4th order, copyright 2015 Miller Puckette, BSD license).
 //
-// Signal path: input -> resonant high-pass -> resonant low-pass -> dry/wet mix.
+// Signal path: input -> drive (soft saturator) -> resonant high-pass -> resonant low-pass -> dry/wet mix.
 //
 // Both sections are 2-pole filters with tanh feedback and the same small-signal response
 //   LP(s) = 1 / (s^2 + (2-r) s + 1),   HP(s) = s^2 / (s^2 + (2-r) s + 1)     (s in units of the cutoff)
@@ -133,12 +133,12 @@ struct Fx {
   float lp_hz_target = 12000.f;
   float lp_res_target = 0.f;
   float mix_target = 1.f;
-  float gain_target = 1.f;
+  float drive_target = 0.f;  // saturation amount a >= 0: input goes through tanh(a x) / a. 0 = clean
   float hp_res = 0.f;  // fixed high-pass resonance (raw r, not smoothed)
   int oversample = 2;
 
   // smoothed state
-  float hp_hz = 20.f, lp_hz = 12000.f, lp_res = 0.f, mix = 1.f, gain = 1.f;
+  float hp_hz = 20.f, lp_hz = 12000.f, lp_res = 0.f, mix = 1.f, drive = 0.f;
   float sr = 48000.f;
   float smooth = 0.004f;
   int channels = 2;
@@ -155,7 +155,7 @@ struct Fx {
     lp_hz_target = 12000.f;
     lp_res_target = 0.f;
     mix_target = 1.f;
-    gain_target = 1.f;
+    drive_target = 0.f;
     hp_res = 0.f;
     oversample = 2;
     snap();
@@ -167,7 +167,7 @@ struct Fx {
     lp_hz = lp_hz_target;
     lp_res = lp_res_target;
     mix = mix_target;
-    gain = gain_target;
+    drive = drive_target;
   }
 
   void reset() {
@@ -192,17 +192,19 @@ struct Fx {
       lp_hz += smooth * (lp_hz_target - lp_hz);
       lp_res += smooth * (lp_res_target - lp_res);
       mix += smooth * (mix_target - mix);
-      gain += smooth * (gain_target - gain);
+      drive += smooth * (drive_target - drive);
       const float k_hp = kTwoPi * (hp_hz < fmax ? hp_hz : fmax);
       const float k_lp = kTwoPi * (lp_hz < fmax ? lp_hz : fmax);
-      // gain >= 1 is "drive": it hits the filters harder (more resonance saturation) and
-      // is divided back out of the wet signal so the passband level stays about unity.
-      const float g = gain < 1.f ? 1.f : gain;
-      const float inv_g = 1.f / g;
+      // DRIVE: soft saturation in front of the filters, y = tanh(a x) / a. It has unity gain for
+      // small signals (so quiet material is untouched and a = 0 is exactly clean) and squashes and
+      // distorts louder material more and more as `a` rises. The dry path stays clean.
+      const bool sat = drive > 1e-3f;
+      const float inv_a = sat ? 1.f / drive : 0.f;
       for (int c = 0; c < channels; ++c) {
         const float x = in[n * channels + c];
-        const float v = hp[c].tick(x * g, k_hp, hp_res, h, os);
-        const float w = lp[c].tick(v, k_lp, lp_res, h, os) * inv_g;
+        const float xs = sat ? fast_tanh(drive * x) * inv_a : x;
+        const float v = hp[c].tick(xs, k_hp, hp_res, h, os);
+        const float w = lp[c].tick(v, k_lp, lp_res, h, os);
         out[n * channels + c] = x + mix * (w - x);
       }
     }

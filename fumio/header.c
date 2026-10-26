@@ -49,7 +49,7 @@ const __unit_header genericfx_unit_header_t unit_header = {
     .api = UNIT_API_VERSION,                                  // API version for which unit was built. See runtime.h
     .dev_id = 0x6D696C69,                                     // 'mili' as a 32-bit number (must be a numeric constant, not a bare word)
     .unit_id = 0x1U,                                          // ID for this unit, scoped within your dev_id
-    .version = 0x00010100U,                                   // major<<16 | minor<<8 | patch
+    .version = 0x00010200U,                                   // major<<16 | minor<<8 | patch
     .name = "ms20",                                           // Name displayed on device (max 19 chars)
     .num_params = 6,                                          // Number of valid parameter descriptors. (max. 8)
 
@@ -69,7 +69,7 @@ const __unit_header genericfx_unit_header_t unit_header = {
       // MIX: dry/wet in tenths of a percent, displayed as 0.0 .. 100.0 %
       {0, 1000, 0, 1000, k_unit_param_type_percent, 1, 1, 0, {"MIX"}},
 
-      // DRIVE: pushes the input harder into the resonance saturation (1x .. 4x), level compensated
+      // DRIVE: soft saturation on the input, 0 = clean .. 1023 = heavy overdrive (quiet signals are left alone)
       {0, 1023, 0, 0, k_unit_param_type_none, 0, 0, 0, {"DRIVE"}},
 
       // QUALITY: RK4 sub-steps per sample, 0 = 1x, 1 = 2x, 2 = 4x (higher = more CPU)

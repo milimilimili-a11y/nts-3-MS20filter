@@ -11,7 +11,7 @@ Runge-Kutta. Arranged like the MS-20: a high-pass feeding a low-pass.
 | LPF     | Pad Y           | Low-pass cutoff, 20 Hz - 20 kHz, exponential. Fully up = open |
 | RESO    | FX DEPTH strip  | **Low-pass** resonance, shown as 0.000 - 6.000. **Self-oscillation starts at 5.000** |
 | MIX     | fixed           | 0 - 100 % dry/wet (default 100 %) |
-| DRIVE   | fixed           | 1x - 4x input gain into the resonance saturation, level-compensated (0 = 1x, 1023 = 4x) |
+| DRIVE   | fixed           | Input saturation, 0 (clean) - 1023 (heavy overdrive). Quiet signals are left alone; loud ones are squashed and distorted |
 | QUALITY | fixed           | 1X / 2X / 4X RK4 sub-steps per sample. Higher = more accurate, more CPU |
 
 Any parameter can be re-assigned on the device.
@@ -31,11 +31,17 @@ Any parameter can be re-assigned on the device.
   response near and above a high cutoff therefore sits roughly 1 dB below the ideal curve.
 
 ## Changing DRIVE
-DRIVE is 0 - 1023 (1x - 4x). To change it:
+DRIVE is 0 - 1023 and sits in front of the filters as a soft saturator, `tanh(a x) / a`, with
+`a = 10 x (DRIVE / 1023)^2`. At 0 it is exactly clean; it has no effect on quiet signals; on louder
+material it adds harmonic distortion and reduces the peak level. Measured on a 0.3-peak signal:
+DRIVE 512 (a = 2.5) is subtle warmth (about 4 % distortion), DRIVE 1023 (a = 10) is heavy overdrive
+(about 25 % distortion, peaks about 8 dB lower). The dry part of MIX stays clean.
+
+To change it:
 - on the unit / in Korg's editor: assign DRIVE to X, Y or the depth strip, or set its fixed value;
-- as the default for everyone: in `header.c`, edit the DRIVE row of `default_mappings` (the last number is the
-  fixed value, e.g. 512 for about 2.5x) and the DRIVE descriptor's default in `params`. Raise `kMaxDrive`
-  in `effect.h` for more than 4x.
+- as the default: in `header.c`, edit the DRIVE row of `default_mappings` (the last number is the
+  fixed value) and the DRIVE descriptor's default in `params` (keep both the same). Raise `kMaxDrive`
+  in `effect.h` for a stronger top end.
 
 ## Build
 1. Get the SDK: `git clone https://github.com/korginc/logue-sdk && cd logue-sdk && git submodule update --init`

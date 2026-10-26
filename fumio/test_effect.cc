@@ -119,6 +119,34 @@ int main() {
     check(ga > 0.72f && ga < 0.86f, "HPF peak matches the fixed resonance (about 0.8)");
   }
 
+  // --- DRIVE reaches the audio ---
+  puts("\nDRIVE through the real parameter path (0.3-peak two-tone signal, default RESO 1.000, LPF 3 kHz):");
+  {
+    std::vector<float> in(2 * 48000);
+    for (int n = 0; n < 48000; ++n) {
+      float x = 0.3f * (0.6f * sinf(6.2831853f * 220.f * n / 48000.f) + 0.4f * sinf(6.2831853f * 1230.f * n / 48000.f));
+      in[2 * n] = in[2 * n + 1] = x;
+    }
+    auto render = [&](int drive, std::vector<float> &out) {
+      Rig r(0, cutoff_value(3000), 1000, 2, drive);
+      out.assign(in.size(), 0.f);
+      const uint32_t B = 256;
+      for (uint32_t pos = 0; pos < 48000; pos += B) { uint32_t n = 48000 - pos < B ? 48000 - pos : B; r.fx.process(&in[2 * pos], &out[2 * pos], n); }
+    };
+    std::vector<float> d0, d512, d1023;
+    render(0, d0); render(512, d512); render(1023, d1023);
+    auto diff_db = [&](const std::vector<float> &a, const std::vector<float> &b) {
+      double d = 0, e = 0;
+      for (size_t i = 9600; i < a.size(); ++i) { d += (double)(a[i] - b[i]) * (a[i] - b[i]); e += (double)a[i] * a[i]; }
+      return 10 * log10(d / e + 1e-30);
+    };
+    double a = diff_db(d0, d512), b = diff_db(d0, d1023);
+    printf("  DRIVE 512 changes the sound by %.1f dB, DRIVE 1023 by %.1f dB (0 dB = as loud as the signal itself)\n", a, b);
+    check(a > -25.0, "DRIVE 512 is audible");
+    check(b > -12.0, "DRIVE 1023 is clearly audible");
+    check(b > a, "more DRIVE changes the sound more");
+  }
+
   printf(fails ? "\n%d FAILURE(S)\n" : "\nall checks passed\n", fails);
   return fails != 0;
 }

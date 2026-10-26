@@ -42,7 +42,10 @@ public:
 
   static constexpr float kMinHz = 20.f;
   static constexpr float kMaxHz = 20000.f;  // the core limits this to 12 kHz at QUALITY 1X
-  static constexpr float kMaxDrive = 4.f;   // input gain at DRIVE = 1023
+  // DRIVE: saturation amount a of the input stage tanh(a x) / a, a = kMaxDrive * (DRIVE / 1023)^2.
+  // 0 = clean. The squared taper gives fine control at low settings. For a 0.3-peak signal,
+  // a = 3 gives about 6 % harmonic distortion and a = 10 about 25 %.
+  static constexpr float kMaxDrive = 10.f;
 
   // RESO scale. The parameter is shown as 0.000 .. 6.000 (value 0 .. 6000, three decimals).
   // The raw filter resonance r is mapped so that the low-pass starts to self-oscillate at
@@ -78,8 +81,11 @@ public:
       break;
 
     case DRIVE:
-      fx_.gain_target = 1.f + (kMaxDrive - 1.f) * param_10bit_to_f32(value);
+    {
+      const float t = param_10bit_to_f32(value);
+      fx_.drive_target = kMaxDrive * t * t;
       break;
+    }
 
     case QUALITY:
       fx_.set_oversample(value == QUALITY_1X ? 1 : (value == QUALITY_2X ? 2 : 4));
